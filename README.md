@@ -63,7 +63,6 @@ Download the ProteinGym dataset. A slurm script is already provided for you. You
 cd MEP-SiPLM/jobs # path to the slurm script
 
 sbatch download.sh
-
 ```
 
 ## File tree
