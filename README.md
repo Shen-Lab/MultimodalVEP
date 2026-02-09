@@ -28,7 +28,7 @@ pip install biotite==0.41.1
 We can use either wget (or curl) to download our data. For large datasets, you can use ```nohup wget -O name.zip url &``` to download them without having to leave the terminal open.
 ```
 cd $SCRATCH
-git clone --branch base https://github.com/Shen-Lab/MultimodalVEP/tree/base
+git clone --branch base https://github.com/Shen-Lab/MultimodalVEP.git
 cd MEP-SiPLM # very important since we need our data to be in the correct location
 
 Please download BOTH ckpt.zip and dataset.zip from (https://zenodo.org/records/10976493).
