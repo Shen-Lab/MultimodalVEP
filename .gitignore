@@ -4,6 +4,9 @@ benchmark/ProtSSN/
 benchmark/PST
 benchmark/SaProt/
 data/esm-variant_t6_8M.csv
-
+CAGI7/
+cagi7.zip
+/ckpt
+/supervised/ckpt
 # But these files should be included
 !benchmark/ProtSSN/prepare_data.ipynb

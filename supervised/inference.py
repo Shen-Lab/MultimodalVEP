@@ -1,22 +1,17 @@
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 import pandas as pd
 import numpy as np
-import h5py
-import os
+import os,sys
 import argparse
 from scipy.stats import spearmanr
-from tqdm import tqdm
-from esm import Alphabet, pretrained
-import esm.inverse_folding
-from torchdrug import data,models,layers
-from torchdrug.layers import geometry
-from dataset import ProteinGymDataset
 from model import EmbeddingMLP
 import pdb
 from transformers import AutoTokenizer, AutoModelForMaskedLM
-
+from tqdm import tqdm
+import time
+import esm
+from esm import Alphabet, pretrained
 def get_struc_seq(foldseek,
                   path,
                   chains: list = None,
@@ -67,6 +62,7 @@ def get_struc_seq(foldseek,
             desc, seq, struc_seq = line.split("\t")[:3]
             
             # Mask low plddt
+            #pdb.set_trace()
             if plddt_mask:
                 try:
                     plddts = extract_plddt(path)
@@ -96,7 +92,7 @@ def get_struc_seq(foldseek,
 
 def generate_single_embedding(mutant_sequence, pdb_path, encoders, emb_type):
     device = next(encoders["mlp"].parameters()).device
-
+    #pdb.set_trace()
     if emb_type == "esm2":
         sequence_data = [("protein_seq", mutant_sequence)]
         tokenizer = encoders["esm2_alphabet"].get_batch_converter()
@@ -106,22 +102,28 @@ def generate_single_embedding(mutant_sequence, pdb_path, encoders, emb_type):
             results = encoders["esm2_model"](batch_tokens, repr_layers=[33], return_contacts=False)
             embeddings = results["representations"][33].squeeze()[1:-1, :].mean(dim=0).cpu().numpy()
     elif emb_type == "saprot":
-        foldseek_cmd_path = "" # To do
-        struc_seq_dict = get_struc_seq(foldseek_cmd_path, pdb_path, ["A"])
-        struc_seq = struc_seq_dict["A"]
+        foldseek_cmd_path = os.path.dirname(sys.executable)+"/foldseek" # To do
+        struc_seq_dict = get_struc_seq(foldseek_cmd_path, pdb_path, ["A"], plddt_mask = False)
+        struc_seq = struc_seq_dict["A"][1].lower()
+        #pdb.set_trace()
         if len(mutant_sequence) != len(struc_seq):
-             raise ValueError("Length mismatch for SaProt!")
+             #raise ValueError("Length mismatch for SaProt!")
+             return None
         combined_input = "".join(char for pair in zip(mutant_sequence, struc_seq) for char in pair)
-        inputs = encoders[saprot_tokenizer](combined_input, return_tensors="pt", truncation=True, padding=True)
+        inputs = encoders["saprot_tokenizer"](combined_input, return_tensors="pt", truncation=False, padding=True)
         inputs = {key: val.to(device) for key, val in inputs.items()}
 
         with torch.no_grad():
-            outputs = encoders[saprot_model](**inputs, output_hidden_states=True)
-        token_embeddings = outputs.hidden_states[-1]
-        attention_mask = inputs["attention_mask"].unsqueeze(-1).expand(token_embeddings.size()).float()
-        summed_embeddings = torch.sum(token_embeddings * attention_mask, 1)
-        summed_mask = torch.clamp(attention_mask.sum(1), min=1e-9)
-        embeddings = (summed_embeddings/ summed_mask).squeeze().cpu().numpy()
+            outputs = encoders["saprot_model"](**inputs, output_hidden_states=True)
+            token_embeddings = outputs.hidden_states[-1]
+            token_embeddings = outputs.hidden_states[-1]
+            attention_mask = inputs['attention_mask']
+            mask = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+            summed_embeddings = torch.sum(token_embeddings * mask, 1)
+            summed_mask = torch.clamp(mask.sum(1), min=1e-9)
+            protein_embedding = summed_embeddings / summed_mask
+            #pdb.set_trace()
+            embeddings = protein_embedding.cpu().numpy().squeeze()
     elif emb_type == "esm_if":
         structure = esm.inverse_folding.util.load_structure(pdb_path,"A")
         coords,seq = esm.inverse_folding.util.extract_coords_from_structure(structure)
@@ -144,15 +146,16 @@ if __name__ == "__main__":
     parser.add_argument('--dms_csv', type=str, required=True, help="The DMS csv file of the protein to evaluate.")
     parser.add_argument('--pdb_path',type=str, required=False, help = "path to the structure file")
     parser.add_argument('--ckpt_path', type=str, required=True, help="Path to the trained EmbeddingMLP checkpoint.")
+    parser.add_argument('--output_file', type=str, required=True, help="Path to the output file.")
     args = parser.parse_args()
-    
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     EMBEDDING_DIMS = {"esm2": 1280, "esm_if": 512, "gearnet": 3072, "saprot": 1280}
     input_dim = sum(EMBEDDING_DIMS[name] for name in args.embedding_list)
 
     print("Loading all required models...")
     encoders = {}
-    pdb.set_trace()
+    #pdb.set_trace()
     if "esm2" in args.embedding_list:
         model, alphabet = pretrained.esm2_t33_650M_UR50D()
         model.eval()
@@ -160,12 +163,12 @@ if __name__ == "__main__":
         encoders["esm2_alphabet"] = alphabet
         encoders["esm2_model"] = model
     if "saprot" in args.embedding_list:
-        saprot_tokenizer = AutoTokenizer.from_pretrained("westlake-repl/SaProt_650M_AF2")
-        saprot_model = AutoModelForMaskedLM.from_pretrained("westlake-repl/SaProt_650M_AF2", use_safetensors=True)
-        model.to(deivce)
+        tokenizer = AutoTokenizer.from_pretrained("westlake-repl/SaProt_650M_AF2")
+        model = AutoModelForMaskedLM.from_pretrained("westlake-repl/SaProt_650M_AF2", use_safetensors=True)
+        model.to(device)
         model.eval()
-        encoders["saprot_tokenizer"] = saprot_tokenizer
-        encoders["saprot_model"] = saprot_model
+        encoders["saprot_tokenizer"] = tokenizer
+        encoders["saprot_model"] = model
     if "esm_if" in args.embedding_list:
         model, alphabet = esm.pretrained.esm_if1_gvp4_t16_142M_UR50()
         model.eval()
@@ -173,6 +176,8 @@ if __name__ == "__main__":
         encoders["esm_if_model"] = model
         encoders["esm_if_alphabet"] = alphabet
     if "gearnet" in args.embedding_list:
+        from torchdrug import data,models,layers
+        from torchdrug.layers import geometry
         model = models.GearNet(
                 input_dim=21,
                 hidden_dims = [512,512,512,512,512,512],
@@ -217,25 +222,60 @@ if __name__ == "__main__":
     test_df = mutations_df[mutations_df[f"fold_random_5"] == args.test_fold].copy()
     print(f"Evaluating {len(test_df)} mutants for {args.dms_csv} in fold {args.test_fold}...")
 
-    predictions, true_labels = [],[]
-    for _,row in tqdm(test_df.iterrows(), total=len(test_df), desc=f"Evaluating {args.dms_csv}"):
+    # cache structure-only embeddings per PDB (and emb_type)
+    struct_cache = {}
+    STRUCT_ONLY = {"esm_if", "gearnet"}  # saprot depends on sequence → don't cache
+
+    predictions = []
+    multi_modal = len(args.embedding_list)>1
+    for _, row in tqdm(test_df.iterrows(), total=len(test_df), desc=f"Evaluating {args.dms_csv}"):
         mutant_sequence = row["mutated_sequence"]
         embedding_to_concat = []
+        skip_row = False
+
         for emb_type in args.embedding_list:
-            embedding = generate_single_embedding(mutant_sequence, pdb_path, encoders, emb_type=emb_type)
+        # Use cache for structure-only embeddings
+            if emb_type in STRUCT_ONLY:
+                key = (emb_type, pdb_path)
+                if key not in struct_cache:
+                    emb = generate_single_embedding(mutant_sequence, pdb_path, encoders, emb_type=emb_type)
+                # If something went wrong once, keep it as None to avoid recompute spam
+                    struct_cache[key] = emb
+                embedding = struct_cache[key]
+            else:
+            # saprot (sequence + structure) → recompute per mutant
+                embedding = generate_single_embedding(mutant_sequence, pdb_path, encoders, emb_type=emb_type)
+
+            if embedding is None:
+            # length mismatch or other failure for this mutant → skip prediction
+                predictions.append(None)
+                skip_row = True
+            # optional: log once per row
+            # print(f"Skipping row due to missing {emb_type} embedding")
+                break  # no need to compute other embeddings for this row
+            if multi_modal:
+                mu = embedding.mean()
+                std = embedding.std()
+                embedding = (embedding-mu)/std
             embedding_to_concat.append(embedding)
-        final_embedding = torch.tensor(np.concatenate(embedding_to_concat), dtype=torch.float32).unsqueeze(0).to(device)
+
+        if skip_row:
+            continue
+
+        final_embedding = torch.tensor(
+            np.concatenate(embedding_to_concat),
+            dtype=torch.float32
+        ).unsqueeze(0).to(device)
+
         with torch.no_grad():
             prediction = mlp_model(final_embedding)
-        predictions.append(prediction.item())
-        true_labels.append(row["DMS_score"])
-    predictions = np.array(predictions)
-    true_labels = np.array(true_labels)
 
-    spearman_corr, _ = spearmanr(predictions,true_labels)
-    mse = ((predictions-true_labels)**2).mean()
+        predictions.append(prediction.item())
+
+
+    predictions = np.array(predictions)
+    df = pd.DataFrame({'Score': predictions})
+    df.to_csv(args.output_file,index = False)
+
 
     print("\n--- Evaluation Results ---")
-    print(f"DMS ID: {args.dms_csv}")
-    print(f"Spearman Correlation: {spearman_corr:.4f}")
-    print(f"Mean Squared Error (MSE): {mse:.4f}")
