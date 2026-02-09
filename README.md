@@ -25,7 +25,7 @@ pip install torch_geometric
 pip install biotite==0.41.1
 ```
 ## Installation
-We can use either wget (or curl) to download our data. For large datasets, you can use ```nohup wget -O name.zip url &``` to download them without having to leave the terminal open.
+Download the ProteinGym dataset.
 ```
 cd $SCRATCH
 git clone --branch base https://github.com/Shen-Lab/MultimodalVEP.git
