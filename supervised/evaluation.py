@@ -1,3 +1,5 @@
+import time
+import time
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -14,7 +16,6 @@ from torchdrug import data,models,layers
 from torchdrug.layers import geometry
 from dataset import ProteinGymDataset
 from model import EmbeddingMLP
-import pdb
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 
 def get_struc_seq(foldseek,
@@ -106,17 +107,17 @@ def generate_single_embedding(mutant_sequence, pdb_path, encoders, emb_type):
             results = encoders["esm2_model"](batch_tokens, repr_layers=[33], return_contacts=False)
             embeddings = results["representations"][33].squeeze()[1:-1, :].mean(dim=0).cpu().numpy()
     elif emb_type == "saprot":
-        foldseek_cmd_path = "" # To do
-        struc_seq_dict = get_struc_seq(foldseek_cmd_path, pdb_path, ["A"])
-        struc_seq = struc_seq_dict["A"]
+        foldseek_cmd_path = "/scratch/user/florida_man/.conda/envs/mep/bin/foldseek"
+        struc_seq_dict = get_struc_seq(foldseek_cmd_path, pdb_path, ["A"], plddt_mask=False)
+        struc_seq = struc_seq_dict["A"][1].lower()
         if len(mutant_sequence) != len(struc_seq):
-             raise ValueError("Length mismatch for SaProt!")
+             return None
         combined_input = "".join(char for pair in zip(mutant_sequence, struc_seq) for char in pair)
-        inputs = encoders[saprot_tokenizer](combined_input, return_tensors="pt", truncation=True, padding=True)
+        inputs = encoders["saprot_tokenizer"](combined_input, return_tensors="pt", truncation=False, padding=True)
         inputs = {key: val.to(device) for key, val in inputs.items()}
 
         with torch.no_grad():
-            outputs = encoders[saprot_model](**inputs, output_hidden_states=True)
+            outputs = encoders["saprot_model"](**inputs, output_hidden_states=True)
         token_embeddings = outputs.hidden_states[-1]
         attention_mask = inputs["attention_mask"].unsqueeze(-1).expand(token_embeddings.size()).float()
         summed_embeddings = torch.sum(token_embeddings * attention_mask, 1)
@@ -152,7 +153,6 @@ if __name__ == "__main__":
 
     print("Loading all required models...")
     encoders = {}
-    pdb.set_trace()
     if "esm2" in args.embedding_list:
         model, alphabet = pretrained.esm2_t33_650M_UR50D()
         model.eval()
@@ -161,9 +161,9 @@ if __name__ == "__main__":
         encoders["esm2_model"] = model
     if "saprot" in args.embedding_list:
         saprot_tokenizer = AutoTokenizer.from_pretrained("westlake-repl/SaProt_650M_AF2")
-        saprot_model = AutoModelForMaskedLM.from_pretrained("westlake-repl/SaProt_650M_AF2", use_safetensors=True)
-        model.to(deivce)
-        model.eval()
+        saprot_model = AutoModelForMaskedLM.from_pretrained("westlake-repl/SaProt_650M_AF2", trust_remote_code=True)
+        saprot_model.to(device)
+        saprot_model.eval()
         encoders["saprot_tokenizer"] = saprot_tokenizer
         encoders["saprot_model"] = saprot_model
     if "esm_if" in args.embedding_list:

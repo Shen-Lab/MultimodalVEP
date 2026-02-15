@@ -31,7 +31,7 @@ To submit a job, run ```sbatch name.sh```. You can monitor your jobs via the OnD
 ## Prerequisites:
 Setting up environment
 ```
-conda create -n mep_env
+conda create -n mep_env python=3.9
 conda activate mep_env # open the environment after creating it
 pip install torch==2.3.1 --index-url https://download.pytorch.org/whl/cu121
 pip install git+https://github.com/facebookresearch/esm.git #newest version needed for ESM-IF (https://github.com/facebookresearch/esm/pull/386)
