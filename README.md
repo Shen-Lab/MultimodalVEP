@@ -21,7 +21,7 @@ source ~/.bashrc
 conda activate <env_name>
 
 # open file directory
-cd /your_path/
+cd <project_folder>
 
 # run python file
 python <file>.py
