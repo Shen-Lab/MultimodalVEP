@@ -60,7 +60,7 @@ git clone --branch base https://github.com/Shen-Lab/MultimodalVEP.git
 ```
 Download the ProteinGym dataset. A slurm script is already provided for you. You just need to modify the file path. Please download BOTH ckpt.zip and dataset.zip from (https://zenodo.org/records/10976493).
 ```
-cd MEP-SiPLM/jobs # path to the slurm script
+cd MultimodalVEP/jobs # path to the slurm script
 
 sbatch download.sh
 ```
