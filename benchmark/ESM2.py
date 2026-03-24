@@ -68,11 +68,11 @@ def wt_marginals(alphabet,mt_seq_list,logits):
         mutant = row["mutant"]
         #mutant = convert_mutation_string(mutant)
         if ":" not in mutant:
-            wt,idx,mt = mutant[2:4],int(mutant[1:-1]),mutant[-1]
+            wt,idx,mt = mutant[0],int(mutant[1:-1]),mutant[-1]
         else:
             continue #only consider single site mutation for now
         wt_token,mt_token = alphabet.get_idx(wt),alphabet.get_idx(mt)
-        pred_score = logits[idx-1,mt_token]-logits[idx-1,wt_token]
+        pred_score = logits[idx,mt_token]-logits[idx,wt_token]
         score_dict[mutant] = [pred_score.detach().cpu().numpy()]
     return score_dict
 
@@ -115,26 +115,43 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     batch_converter = alphabet.get_batch_converter()
-    
-    wt_spearman_list = []
-    masked_spearman_list = []
-    #for index, row in reference_file.iterrows():
-    dms_id = "A0A1I9GEU1_NEIME_Kennouche_2019"
-    wt_seq = "FTLIELMIVIAIVGILAAVALPAYQDYTARAQVSEAILLAEGQKSAVTEYYLNHGEWPGDNSSAGVATSADIKGKYVQSVTVANGVITAQMASSNVNNEIKSKKLSLWAKRQNGSVKWFCGQPVTRTTATATDVAAANGKTDDKINTKHLPSTCRDDSSAS"
-    seq_len = len(wt_seq)
-    mt_seq_list = pd.read_csv(os.path.join(data_path,dms_id+".csv"))
-    logits,representation = esm_encode(model,repr_layers,batch_converter,wt_seq)
-    score_dict = wt_marginals(alphabet,mt_seq_list,logits)
-    #pdb.set_trace()
-    pred_score = [value_list[0] for value_list in score_dict.values()]
-    #gt_score = [value_list[1] for value_list in score_dict.values()]
-    gt_score = mt_seq_list["DMS_score"]
-    wt_marginals_spearman = spearmanr(pred_score,gt_score)[0]
-    #wt_spearman_list.append(wt_marginals_spearman)
-    
-        #score_dict = masked_marginals(model,repr_layers,alphabet,wt_seq,mt_seq_list)
-        #pred_score = [value_list[0] for value_list in score_dict.values()]
-        #gt_score = [value_list[1] for value_list in score_dict.values()]
-        #masked_marginals_spearman = spearmanr(pred_score,gt_score)[0]
-        #masked_spearman_list.append(masked_marginals_spearman)
-    print(dms_id,wt_marginals_spearman)
+      
+    results = []
+
+    for index, row in reference_file.iterrows():
+    #dms_id = "A0A1I9GEU1_NEIME_Kennouche_2019"
+    #wt_seq = "FTLIELMIVIAIVGILAAVALPAYQDYTARAQVSEAILLAEGQKSAVTEYYLNHGEWPGDNSSAGVATSADIKGKYVQSVTVANGVITAQMASSNVNNEIKSKKLSLWAKRQNGSVKWFCGQPVTRTTATATDVAAANGKTDDKINTKHLPSTCRDDSSAS"
+        dms_id = row["DMS_id"].strip()
+        wt_seq = row["target_seq"]
+        seq_len = len(wt_seq)
+        sub_csv = os.path.join(data_path,dms_id+".csv")
+        if not os.path.exists(sub_csv):
+             print(f"[SKIP missing csv] {repr(dms_id)}")
+             continue
+        mt_seq_list = pd.read_csv(sub_csv)
+        # WT marginals
+        logits, representation = esm_encode(model, repr_layers, batch_converter, wt_seq)
+        wt_score_dict = wt_marginals(alphabet, mt_seq_list, logits)
+        wt_pred_score = [v[0] for v in wt_score_dict.values()]
+        wt_gt_score = mt_seq_list.set_index("mutant").loc[list(wt_score_dict.keys()), "DMS_score"].values
+        wt_marginals_spearman = spearmanr(wt_pred_score, wt_gt_score)[0]
+
+        # Masked marginals
+        masked_score_dict = masked_marginals(model, repr_layers, alphabet, wt_seq, mt_seq_list)
+        masked_pred_score = [v[0] for v in masked_score_dict.values()]
+        masked_gt_score = mt_seq_list.set_index("mutant").loc[list(masked_score_dict.keys()), "DMS_score"].values
+        masked_marginals_spearman = spearmanr(masked_pred_score, masked_gt_score)[0]
+
+        print(dms_id, wt_marginals_spearman, masked_marginals_spearman)
+
+        results.append({
+            "DMS_id": dms_id,
+            "wt_marginals_spearman": wt_marginals_spearman,
+            "masked_marginals_spearman": masked_marginals_spearman,
+            "seq_len": len(wt_seq)
+        })
+
+    results_df = pd.DataFrame(results)
+    os.makedirs("benchmark_results/ESM-2", exist_ok=True)
+    results_df.to_csv("benchmark_results/ESM-2/spearman.csv", index=False)
+    print("Saved results to benchmark_results/ESM-2/spearman.csv")
